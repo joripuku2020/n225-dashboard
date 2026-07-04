@@ -6,20 +6,32 @@ on:
       - pages build and deployment
     types:
       - completed
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
 
 permissions:
   actions: write
 
 jobs:
   retry:
-    if: >-
-      github.event.workflow_run.conclusion == 'failure' &&
-      github.event.workflow_run.run_attempt < 3
     runs-on: ubuntu-latest
     steps:
       - name: Retry failed deployment jobs
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
           REPOSITORY: ${{ github.repository }}
-        run: gh run rerun "$RUN_ID" --failed --repo "$REPOSITORY"
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          if [ -n "$EVENT_RUN_ID" ]; then
+            RUN_ID="$EVENT_RUN_ID"
+          else
+            RUN_ID="$(gh run list --repo "$REPOSITORY" --workflow 303990429 --limit 1 --json databaseId --jq '.[0].databaseId')"
+          fi
+          [ -n "$RUN_ID" ] || exit 0
+          STATE="$(gh run view "$RUN_ID" --repo "$REPOSITORY" --json conclusion,attempt)"
+          CONCLUSION="$(echo "$STATE" | jq -r '.conclusion')"
+          ATTEMPT="$(echo "$STATE" | jq -r '.attempt')"
+          if [ "$CONCLUSION" = "failure" ] && [ "$ATTEMPT" -lt 3 ]; then
+            gh run rerun "$RUN_ID" --failed --repo "$REPOSITORY"
+          fi
